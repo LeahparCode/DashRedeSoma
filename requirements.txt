@@ -1,20 +1,5 @@
-services:
-  - type: web
-    name: leahpar-analytics
-    env: python
-    # Instala as dependências
-    buildCommand: pip install -r requirements.txt
-    # Inicia o servidor usando a porta dinâmica ($PORT) do Render
-    startCommand: uvicorn main:app --host 0.0.0.0 --port $PORT
-    autoDeploy: true
-    # Define quais variáveis existem, mas diz ao Render que você vai
-    # preencher os valores (segredos) manualmente no painel (sync: false)
-    envVars:
-      - key: AZURE_WORKSPACE_ID
-        sync: false
-      - key: AZURE_CLIENT_ID
-        sync: false
-      - key: AZURE_CLIENT_SECRET
-        sync: false
-      - key: AZURE_TENANT_ID
-        sync: false
+fastapi
+uvicorn
+azure-monitor-query
+azure-identity
+python-dateutil
