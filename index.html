@@ -1,0 +1,402 @@
+<!DOCTYPE html>
+<html lang="pt">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Leahpar Analytics</title>
+    
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>📊</text></svg>">
+
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;700&display=swap');
+        
+        :root {
+            --bg-color: #0f172a;
+            --text-color: #f1f5f9;
+            --glass-bg: rgba(30, 41, 59, 0.7);
+            --glass-border: rgba(125, 211, 252, 0.25);
+            --label-opacity: 0.6;
+            --footer-color: rgba(255, 255, 255, 0.3);
+            --center-val-color: #f1f5f9;
+            --accent-blue: #3b82f6;
+        }
+
+        .light-mode {
+            --bg-color: #f8fafc;
+            --text-color: #1e293b;
+            --glass-bg: rgba(255, 255, 255, 0.8);
+            --glass-border: rgba(14, 165, 233, 0.2);
+            --label-opacity: 0.8;
+            --footer-color: rgba(0, 0, 0, 0.4);
+            --center-val-color: #1e293b;
+        }
+
+        body { 
+            font-family: 'Outfit', sans-serif; 
+            background-color: var(--bg-color); 
+            color: var(--text-color); 
+            margin: 0; 
+            transition: background-color 0.3s ease, color 0.3s ease;
+            display: flex;
+            flex-direction: column;
+            min-height: 100vh;
+            opacity: 0;
+            animation: fadeIn 0.8s ease forwards;
+        }
+
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(10px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        .glass { 
+            border-radius: 1rem; 
+            background: var(--glass-bg); 
+            border: 1px solid var(--glass-border); 
+            backdrop-filter: blur(10px); 
+            transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+        }
+
+        .glass:hover {
+            border-color: rgba(125, 211, 252, 0.6);
+            transform: translateY(-2px);
+        }
+
+        .text-label { 
+            opacity: var(--label-opacity); 
+            font-size: 0.75rem; 
+            text-transform: uppercase; 
+            letter-spacing: 0.05em; 
+            font-weight: 700; 
+        }
+
+        .chart-container { position: relative; height: 240px; width: 100%; }
+        .chart-container-small { height: 200px; margin: auto; padding: 10px; }
+        
+        .chart-center-info {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            text-align: center;
+            pointer-events: none;
+            width: 80%;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+        }
+
+        .animate-title {
+            background: linear-gradient(to right, #22d3ee, #3b82f6, #8b5cf6, #22d3ee);
+            background-size: 300% auto;
+            -webkit-background-clip: text;
+            background-clip: text;
+            color: transparent;
+            animation: shimmer 4s linear infinite;
+        }
+
+        @keyframes shimmer {
+            0% { background-position: 0% center; }
+            100% { background-position: 300% center; }
+        }
+
+        .nav-arrows {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            background: rgba(0,0,0,0.15);
+            padding: 4px 8px;
+            border-radius: 99px;
+            border: 1px solid var(--glass-border);
+        }
+
+        .arrow-btn {
+            width: 24px;
+            height: 24px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            border-radius: 50%;
+            background: rgba(255,255,255,0.05);
+            transition: all 0.2s ease;
+            cursor: pointer;
+            color: var(--accent-blue);
+        }
+
+        .arrow-btn:hover { background: var(--accent-blue); color: white; transform: scale(1.1); }
+
+        footer {
+            margin-top: auto;
+            padding: 1.5rem 0;
+            text-align: center;
+            font-size: 0.65rem;
+            font-weight: 500;
+            letter-spacing: 0.1em;
+            color: var(--footer-color);
+            text-transform: uppercase;
+        }
+
+        .card-date-picker {
+            background: transparent;
+            border: none;
+            color: var(--text-color);
+            font-size: 10px;
+            font-weight: bold;
+            outline: none;
+            cursor: pointer;
+            opacity: 0.8;
+            transition: opacity 0.2s;
+        }
+        .card-date-picker:hover { opacity: 1; }
+    </style>
+</head>
+<body class="p-4 md:p-8">
+    <main class="max-w-7xl mx-auto w-full">
+        <!-- Header -->
+        <div class="flex flex-col md:flex-row justify-between items-center mb-8 gap-4">
+            <div>
+                <h1 class="text-3xl font-bold animate-title">Leahpar Analytics</h1>
+                <p class="opacity-60 text-sm">Monitoramento - Rede Soma</p>
+            </div>
+            <div class="flex items-center gap-4">
+                <button onclick="toggleTheme()" class="theme-toggle glass p-2 px-3 flex items-center gap-2 text-xs font-semibold">
+                    <span id="theme-icon">🌙</span>
+                </button>
+                <input type="date" id="datePicker" onchange="syncAndInit('global')" class="bg-slate-800/50 border border-slate-700 rounded-lg px-4 py-2 text-xs outline-none text-inherit glass cursor-pointer">
+                <div id="connection-status" class="flex items-center gap-2 text-[9px] font-bold uppercase tracking-wider">
+                    <span class="relative flex h-2 w-2">
+                        <span class="status-pulse absolute inline-flex h-full w-full rounded-full bg-emerald-500 opacity-75"></span>
+                        <span class="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
+                    </span>
+                    <span class="ml-1">ONLINE</span>
+                </div>
+            </div>
+        </div>
+
+        <!-- KPIs -->
+        <div class="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
+            <div class="glass p-4 border-l-4 border-blue-500">
+                <h3 class="text-label">Interações Hora Hora Dia</h3>
+                <p id="val-total" class="text-2xl font-bold mt-1">--</p>
+                <div class="flex gap-3 mt-1 text-[9px] font-bold">
+                    <span class="text-emerald-500">↓ <span id="val-rec">--</span> Rec</span>
+                    <span class="text-blue-400">↑ <span id="val-env">--</span> Env</span>
+                </div>
+            </div>
+            <div class="glass p-4 border-l-4 border-emerald-500">
+                <h3 class="text-label">Taxa Sucesso</h3>
+                <p id="val-success" class="text-2xl font-bold text-emerald-500 mt-1">--%</p>
+            </div>
+            <div class="glass p-4 border-l-4 border-amber-500">
+                <h3 class="text-label">Latência</h3>
+                <p id="val-latency" class="text-2xl font-bold text-amber-500 mt-1">--ms</p>
+            </div>
+            <div class="glass p-4 border-l-4 border-rose-500">
+                <h3 class="text-label">Erros de log Envio x Recebimento</h3>
+                <p id="val-errors" class="text-2xl font-bold text-rose-500 mt-1">--</p>
+            </div>
+        </div>
+
+        <!-- Gráficos Principais -->
+        <div class="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-6">
+            <div class="glass p-5 lg:col-span-2">
+                <div class="flex justify-between items-center mb-4">
+                    <h3 class="text-label">Fluxo por Horário de Mensagens</h3>
+                    <div class="flex gap-4 text-[9px] font-bold">
+                        <span class="flex items-center gap-1"><span class="w-1.5 h-1.5 rounded-full bg-emerald-500"></span> RECEBIDAS</span>
+                        <span class="flex items-center gap-1"><span class="w-1.5 h-1.5 rounded-full bg-blue-500"></span> ENVIADAS</span>
+                    </div>
+                </div>
+                <div class="chart-container">
+                    <canvas id="chartVol"></canvas>
+                </div>
+            </div>
+            
+            <div class="glass p-5 flex flex-col">
+                <div class="flex justify-between items-center mb-4">
+                    <div class="flex flex-col">
+                        <h3 id="circular-title" class="text-label">Enviadas x Recebidas</h3>
+                        <input type="date" id="cardDatePicker" onchange="syncAndInit('card')" class="card-date-picker">
+                    </div>
+                    <div class="nav-arrows">
+                        <button onclick="changeView(-1)" class="arrow-btn">
+                            <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></svg>
+                        </button>
+                        <button onclick="changeView(1)" class="arrow-btn">
+                            <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="m9 18 6-6-6-6"/></svg>
+                        </button>
+                    </div>
+                </div>
+                <div class="chart-container chart-container-small flex-grow relative">
+                    <canvas id="chartCircular"></canvas>
+                    <div class="chart-center-info" id="centerInfo">
+                        <p id="center-label" class="text-[8px] font-bold opacity-0 transition-opacity uppercase leading-tight">Status</p>
+                        <p id="center-value" class="text-lg font-bold text-[var(--center-val-color)] opacity-0 transition-opacity">--</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </main>
+
+    <footer>Desenvolvido por <span class="font-bold opacity-100">Leahpar Code</span></footer>
+
+    <script>
+        let charts = {};
+        let isDarkMode = true;
+        const views = ['biz', 'health', 'funnel', 'top_users'];
+        let viewIndex = 0;
+
+        function toggleTheme() {
+            isDarkMode = !isDarkMode;
+            document.body.classList.toggle('light-mode', !isDarkMode);
+            document.getElementById('theme-icon').innerText = isDarkMode ? '🌙' : '☀️';
+            localStorage.setItem('leahpar-theme', isDarkMode ? 'dark' : 'light');
+            if (window.lastData) renderCharts(window.lastData);
+        }
+
+        if (localStorage.getItem('leahpar-theme') === 'light') toggleTheme();
+
+        function syncAndInit(source) {
+            const global = document.getElementById('datePicker');
+            const card = document.getElementById('cardDatePicker');
+            if (source === 'global') card.value = global.value;
+            else global.value = card.value;
+            init();
+        }
+
+        async function init() {
+            const date = document.getElementById('datePicker').value;
+            try {
+                const urlPath = `/api/metrics${date ? '?date='+date : ''}`;
+                const res = await fetch(new URL(urlPath, window.location.href).href);
+                const data = await res.json();
+                window.lastData = data;
+
+                document.getElementById('val-total').innerText = data.msgs_total || 0;
+                document.getElementById('val-rec').innerText = data.msgs_received || 0;
+                document.getElementById('val-env').innerText = data.msgs_sent || 0;
+                document.getElementById('val-success').innerText = (data.sql_success_rate || 0) + '%';
+                document.getElementById('val-latency').innerText = (data.latency_p95 || 0) + 'ms';
+                document.getElementById('val-errors').innerText = data.error_count || 0;
+                
+                renderCharts(data);
+            } catch(e) { console.error(e); }
+        }
+
+        function changeView(dir) {
+            viewIndex = (viewIndex + dir + views.length) % views.length;
+            const titles = { 'biz': 'Visão: Negócio', 'health': 'Visão: Saúde', 'funnel': 'Visão: Funil Engajamento', 'top_users': 'Visão: Top Usuários' };
+            document.getElementById('circular-title').innerText = titles[views[viewIndex]];
+            renderCharts(window.lastData);
+        }
+
+        function getStatusColor(label) {
+            const l = label.toLowerCase();
+            if (l.includes('recebida')) return '#10b981';
+            if (l.includes('enviada') || l.includes('resposta')) return '#3b82f6';
+            if (l.includes('erro')) return '#f43f5e';
+            return '#3b82f6';
+        }
+
+        function renderCharts(data) {
+            const textColor = isDarkMode ? '#94a3b8' : '#64748b';
+            const gridColor = isDarkMode ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.05)';
+            const labels = data.volume_times.map(t => new Date(t).getHours().toString().padStart(2, '0') + ':00');
+
+            const ctxVol = document.getElementById('chartVol');
+            if(charts.vol) charts.vol.destroy();
+            charts.vol = new Chart(ctxVol, {
+                type: 'line',
+                data: {
+                    labels: labels,
+                    datasets: [
+                        { label: 'Recebidas', data: data.received_data, borderColor: '#10b981', backgroundColor: 'rgba(16, 185, 129, 0.08)', fill: true, tension: 0.4 },
+                        { label: 'Enviadas', data: data.sent_data, borderColor: '#3b82f6', backgroundColor: 'rgba(59, 130, 246, 0.08)', fill: true, tension: 0.4 }
+                    ]
+                },
+                options: {
+                    maintainAspectRatio: false,
+                    scales: {
+                        x: { ticks: { color: textColor, font: { size: 9 } }, grid: { display: false } },
+                        y: { beginAtZero: true, ticks: { color: textColor, font: { size: 9 } }, grid: { color: gridColor } }
+                    },
+                    plugins: { legend: { display: false }, tooltip: { mode: 'index', intersect: false } }
+                }
+            });
+
+            const currentView = views[viewIndex];
+            const ctxCirc = document.getElementById('chartCircular');
+            if(charts.circ) charts.circ.destroy();
+
+            const centerLabel = document.getElementById('center-label');
+            const centerValue = document.getElementById('center-value');
+            centerLabel.style.opacity = '0';
+            centerValue.style.opacity = '0';
+
+            if (currentView === 'biz' || currentView === 'health') {
+                const bizKeys = ['recebida', 'enviada', 'resposta'];
+                const filteredLabels = data.status_labels.filter(l => currentView === 'biz' ? bizKeys.some(k => l.toLowerCase().includes(k)) : !bizKeys.some(k => l.toLowerCase().includes(k)));
+                const filteredValues = filteredLabels.map(l => data.status_values[data.status_labels.indexOf(l)]);
+                const filteredColors = filteredLabels.map(l => getStatusColor(l));
+
+                charts.circ = new Chart(ctxCirc, {
+                    type: 'doughnut',
+                    data: { labels: filteredLabels, datasets: [{ data: filteredValues, backgroundColor: filteredColors, borderWidth: 0, hoverOffset: 15 }] },
+                    options: { 
+                        maintainAspectRatio: false, cutout: '80%', layout: { padding: 15 },
+                        plugins: { legend: { display: false }, tooltip: { enabled: false } },
+                        onHover: (e, el) => {
+                            if (el.length > 0) {
+                                centerLabel.innerText = filteredLabels[el[0].index];
+                                centerValue.innerText = filteredValues[el[0].index];
+                                centerLabel.style.opacity = '1'; centerValue.style.opacity = '1';
+                            } else {
+                                centerLabel.style.opacity = '0'; centerValue.style.opacity = '0';
+                            }
+                        }
+                    }
+                });
+            } 
+            else if (currentView === 'funnel') {
+                charts.circ = new Chart(ctxCirc, {
+                    type: 'bar',
+                    data: { labels: ['Enviadas', 'Entregues', 'Lidas'], datasets: [{ data: data.funnel_data, backgroundColor: ['#3b82f6', '#22d3ee', '#10b981'], borderRadius: 4 }] },
+                    options: { maintainAspectRatio: false, indexAxis: 'y', scales: { x: { beginAtZero: true, grid: { color: gridColor }, ticks: { color: textColor, font: { size: 9 } } }, y: { grid: { display: false }, ticks: { color: textColor, font: { size: 10, weight: 'bold' } } } }, plugins: { legend: { display: false } } }
+                });
+            }
+            else if (currentView === 'top_users') {
+                charts.circ = new Chart(ctxCirc, {
+                    type: 'bar',
+                    data: {
+                        labels: data.top_users_labels,
+                        datasets: [
+                            { label: 'Interações Totais', data: data.top_users_totals, backgroundColor: '#3b82f6', borderRadius: 4 }
+                        ]
+                    },
+                    options: {
+                        maintainAspectRatio: false,
+                        scales: { 
+                            x: { grid: { display: false }, ticks: { color: textColor, font: { size: 8 } } },
+                            y: { beginAtZero: true, grid: { color: gridColor }, ticks: { color: textColor, font: { size: 9 } } }
+                        },
+                        plugins: { 
+                            legend: { display: false },
+                            tooltip: { mode: 'index', intersect: false }
+                        }
+                    }
+                });
+            }
+        }
+
+        const today = new Date();
+        const localIsoDate = new Date(today.getTime() - (today.getTimezoneOffset() * 60000)).toISOString().split('T')[0];
+        document.getElementById('datePicker').value = localIsoDate;
+        document.getElementById('cardDatePicker').value = localIsoDate;
+        init();
+        setInterval(init, 30000);
+    </script>
+</body>
+</html>
