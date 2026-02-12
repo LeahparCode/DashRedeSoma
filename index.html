@@ -128,6 +128,28 @@
 
         .arrow-btn:hover { background: var(--accent-blue); color: white; transform: scale(1.1); }
 
+        .status-pulse {
+            position: relative;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        .status-pulse::after {
+            content: '';
+            position: absolute;
+            width: 100%;
+            height: 100%;
+            background: inherit;
+            border-radius: inherit;
+            animation: pulse-ring 1.5s cubic-bezier(0.455, 0.03, 0.515, 0.955) infinite;
+            opacity: 0.6;
+        }
+
+        @keyframes pulse-ring {
+            0% { transform: scale(0.7); opacity: 0.8; }
+            80%, 100% { transform: scale(2.2); opacity: 0; }
+        }
+
         footer {
             margin-top: auto;
             padding: 1.5rem 0;
@@ -179,7 +201,7 @@
         <!-- KPIs -->
         <div class="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
             <div class="glass p-4 border-l-4 border-blue-500">
-                <h3 class="text-label">Interações Hora Hora Dia</h3>
+                <h3 class="text-label">Interações (Entrada + Saída)</h3>
                 <p id="val-total" class="text-2xl font-bold mt-1">--</p>
                 <div class="flex gap-3 mt-1 text-[9px] font-bold">
                     <span class="text-emerald-500">↓ <span id="val-rec">--</span> Rec</span>
@@ -187,15 +209,15 @@
                 </div>
             </div>
             <div class="glass p-4 border-l-4 border-emerald-500">
-                <h3 class="text-label">Taxa Sucesso</h3>
+                <h3 class="text-label">Taxa Sucesso %</h3>
                 <p id="val-success" class="text-2xl font-bold text-emerald-500 mt-1">--%</p>
             </div>
             <div class="glass p-4 border-l-4 border-amber-500">
-                <h3 class="text-label">Latência</h3>
+                <h3 class="text-label">Latência (ms)</h3>
                 <p id="val-latency" class="text-2xl font-bold text-amber-500 mt-1">--ms</p>
             </div>
             <div class="glass p-4 border-l-4 border-rose-500">
-                <h3 class="text-label">Erros de log Envio x Recebimento</h3>
+                <h3 class="text-label">Erros de Processamento</h3>
                 <p id="val-errors" class="text-2xl font-bold text-rose-500 mt-1">--</p>
             </div>
         </div>
@@ -204,7 +226,7 @@
         <div class="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-6">
             <div class="glass p-5 lg:col-span-2">
                 <div class="flex justify-between items-center mb-4">
-                    <h3 class="text-label">Fluxo por Horário de Mensagens</h3>
+                    <h3 class="text-label">Volume: Webhook vs Fila</h3>
                     <div class="flex gap-4 text-[9px] font-bold">
                         <span class="flex items-center gap-1"><span class="w-1.5 h-1.5 rounded-full bg-emerald-500"></span> RECEBIDAS</span>
                         <span class="flex items-center gap-1"><span class="w-1.5 h-1.5 rounded-full bg-blue-500"></span> ENVIADAS</span>
@@ -218,7 +240,7 @@
             <div class="glass p-5 flex flex-col">
                 <div class="flex justify-between items-center mb-4">
                     <div class="flex flex-col">
-                        <h3 id="circular-title" class="text-label">Enviadas x Recebidas</h3>
+                        <h3 id="circular-title" class="text-label">Visão: Negócio</h3>
                         <input type="date" id="cardDatePicker" onchange="syncAndInit('card')" class="card-date-picker">
                     </div>
                     <div class="nav-arrows">
@@ -283,29 +305,37 @@
                 document.getElementById('val-errors').innerText = data.error_count || 0;
                 
                 renderCharts(data);
-            } catch(e) { console.error(e); }
+            } catch(e) { console.error("Erro na renderização:", e); }
         }
 
         function changeView(dir) {
             viewIndex = (viewIndex + dir + views.length) % views.length;
-            const titles = { 'biz': 'Visão: Negócio', 'health': 'Visão: Saúde', 'funnel': 'Visão: Funil Engajamento', 'top_users': 'Visão: Top Usuários' };
+            const titles = { 
+                'biz': 'Visão: Negócio', 
+                'health': 'Visão: Saúde', 
+                'funnel': 'Visão: Fluxo (Audit)', 
+                'top_users': 'Top 4 Interações (Dia)' 
+            };
             document.getElementById('circular-title').innerText = titles[views[viewIndex]];
             renderCharts(window.lastData);
         }
 
         function getStatusColor(label) {
-            const l = label.toLowerCase();
+            const l = (label || '').toLowerCase();
             if (l.includes('recebida')) return '#10b981';
-            if (l.includes('enviada') || l.includes('resposta')) return '#3b82f6';
-            if (l.includes('erro')) return '#f43f5e';
-            return '#3b82f6';
+            if (l.includes('enviada') || l.includes('queue')) return '#3b82f6';
+            if (l.includes('falha') || l.includes('erro')) return '#f43f5e';
+            return '#64748b';
         }
 
         function renderCharts(data) {
+            if (!data) return;
+
             const textColor = isDarkMode ? '#94a3b8' : '#64748b';
             const gridColor = isDarkMode ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.05)';
-            const labels = data.volume_times.map(t => new Date(t).getHours().toString().padStart(2, '0') + ':00');
+            const labels = (data.volume_times || []).map(t => new Date(t).getHours().toString().padStart(2, '0') + ':00');
 
+            // 1. Linhas (Volume)
             const ctxVol = document.getElementById('chartVol');
             if(charts.vol) charts.vol.destroy();
             charts.vol = new Chart(ctxVol, {
@@ -313,8 +343,8 @@
                 data: {
                     labels: labels,
                     datasets: [
-                        { label: 'Recebidas', data: data.received_data, borderColor: '#10b981', backgroundColor: 'rgba(16, 185, 129, 0.08)', fill: true, tension: 0.4 },
-                        { label: 'Enviadas', data: data.sent_data, borderColor: '#3b82f6', backgroundColor: 'rgba(59, 130, 246, 0.08)', fill: true, tension: 0.4 }
+                        { label: 'Recebidas', data: data.received_data || [], borderColor: '#10b981', backgroundColor: 'rgba(16, 185, 129, 0.08)', fill: true, tension: 0.4 },
+                        { label: 'Enviadas', data: data.sent_data || [], borderColor: '#3b82f6', backgroundColor: 'rgba(59, 130, 246, 0.08)', fill: true, tension: 0.4 }
                     ]
                 },
                 options: {
@@ -327,6 +357,7 @@
                 }
             });
 
+            // 2. Gráfico Circular Dinâmico
             const currentView = views[viewIndex];
             const ctxCirc = document.getElementById('chartCircular');
             if(charts.circ) charts.circ.destroy();
@@ -336,10 +367,26 @@
             centerLabel.style.opacity = '0';
             centerValue.style.opacity = '0';
 
-            if (currentView === 'biz' || currentView === 'health') {
-                const bizKeys = ['recebida', 'enviada', 'resposta'];
-                const filteredLabels = data.status_labels.filter(l => currentView === 'biz' ? bizKeys.some(k => l.toLowerCase().includes(k)) : !bizKeys.some(k => l.toLowerCase().includes(k)));
-                const filteredValues = filteredLabels.map(l => data.status_values[data.status_labels.indexOf(l)]);
+            // VISÃO NEGÓCIO: Apenas Enviadas x Recebidas
+            if (currentView === 'biz') {
+                const allLabels = data.status_labels || [];
+                const allValues = data.status_values || [];
+                
+                // FILTRO DE FERRO (ATUALIZADO):
+                // 1. Bloqueio explícito de QUALQUER erro ou falha
+                // 2. Permissão explícita apenas para negócio
+                const filteredIndices = allLabels.map((l, i) => i).filter(i => {
+                    const lLower = (allLabels[i] || '').toLowerCase();
+                    
+                    // SE TEM ERRO OU FALHA, TCHAU!
+                    if (lLower.includes('erro') || lLower.includes('falha')) return false;
+                    
+                    // SÓ ENTRA SE FOR NEGÓCIO
+                    return lLower.includes('recebida') || lLower.includes('enviada');
+                });
+
+                const filteredLabels = filteredIndices.map(i => allLabels[i]);
+                const filteredValues = filteredIndices.map(i => allValues[i]);
                 const filteredColors = filteredLabels.map(l => getStatusColor(l));
 
                 charts.circ = new Chart(ctxCirc, {
@@ -360,27 +407,88 @@
                     }
                 });
             } 
+            // VISÃO SAÚDE: Mostra TUDO (Erros em Vermelho, Logs em Azul)
+            else if (currentView === 'health') {
+                const allLabels = data.status_labels || [];
+                const allValues = data.status_values || [];
+                
+                const healthColors = allLabels.map(l => {
+                    const lower = (l || '').toLowerCase();
+                    if (lower.includes('falha') || lower.includes('erro')) return '#f43f5e'; // Vermelho
+                    return '#3b82f6'; // Azul Operacional
+                });
+
+                charts.circ = new Chart(ctxCirc, {
+                    type: 'doughnut',
+                    data: { labels: allLabels, datasets: [{ data: allValues, backgroundColor: healthColors, borderWidth: 0, hoverOffset: 15 }] },
+                    options: { 
+                        maintainAspectRatio: false, cutout: '80%', layout: { padding: 15 },
+                        plugins: { legend: { display: false }, tooltip: { enabled: false } },
+                        onHover: (e, el) => {
+                            if (el.length > 0) {
+                                centerLabel.innerText = allLabels[el[0].index];
+                                centerValue.innerText = allValues[el[0].index];
+                                centerLabel.style.opacity = '1'; centerValue.style.opacity = '1';
+                            } else {
+                                centerLabel.style.opacity = '0'; centerValue.style.opacity = '0';
+                            }
+                        }
+                    }
+                });
+            }
             else if (currentView === 'funnel') {
+                const funnelData = [data.msgs_received || 0, data.msgs_sent || 0];
                 charts.circ = new Chart(ctxCirc, {
                     type: 'bar',
-                    data: { labels: ['Enviadas', 'Entregues', 'Lidas'], datasets: [{ data: data.funnel_data, backgroundColor: ['#3b82f6', '#22d3ee', '#10b981'], borderRadius: 4 }] },
-                    options: { maintainAspectRatio: false, indexAxis: 'y', scales: { x: { beginAtZero: true, grid: { color: gridColor }, ticks: { color: textColor, font: { size: 9 } } }, y: { grid: { display: false }, ticks: { color: textColor, font: { size: 10, weight: 'bold' } } } }, plugins: { legend: { display: false } } }
+                    data: { 
+                        labels: ['Recebidas', 'Enviadas'], 
+                        datasets: [{ 
+                            data: funnelData, 
+                            backgroundColor: ['#10b981', '#3b82f6'], 
+                            borderRadius: 4 
+                        }] 
+                    },
+                    options: { 
+                        maintainAspectRatio: false, indexAxis: 'y',
+                        scales: { 
+                            x: { beginAtZero: true, grid: { color: gridColor }, ticks: { color: textColor, font: { size: 9 } } }, 
+                            y: { grid: { display: false }, ticks: { color: textColor, font: { size: 9, weight: 'bold' } } } 
+                        }, 
+                        plugins: { legend: { display: false } } 
+                    }
                 });
             }
             else if (currentView === 'top_users') {
+                const userLabels = data.top_users_labels || [];
+                const userTotals = data.top_users_totals || [];
+                
                 charts.circ = new Chart(ctxCirc, {
                     type: 'bar',
                     data: {
-                        labels: data.top_users_labels,
+                        labels: userLabels.length ? userLabels : ['Sem dados'],
                         datasets: [
-                            { label: 'Interações Totais', data: data.top_users_totals, backgroundColor: '#3b82f6', borderRadius: 4 }
+                            { 
+                                label: 'Interações', 
+                                data: userTotals.length ? userTotals : [0], 
+                                backgroundColor: '#3b82f6', 
+                                borderRadius: 4,
+                                barThickness: 20
+                            }
                         ]
                     },
                     options: {
                         maintainAspectRatio: false,
+                        indexAxis: 'y',
                         scales: { 
-                            x: { grid: { display: false }, ticks: { color: textColor, font: { size: 8 } } },
-                            y: { beginAtZero: true, grid: { color: gridColor }, ticks: { color: textColor, font: { size: 9 } } }
+                            x: { 
+                                beginAtZero: true, 
+                                grid: { color: gridColor }, 
+                                ticks: { color: textColor, font: { size: 9 } } 
+                            },
+                            y: { 
+                                grid: { display: false }, 
+                                ticks: { color: textColor, font: { size: 10, weight: 'bold' } }
+                            } 
                         },
                         plugins: { 
                             legend: { display: false },
@@ -395,6 +503,7 @@
         const localIsoDate = new Date(today.getTime() - (today.getTimezoneOffset() * 60000)).toISOString().split('T')[0];
         document.getElementById('datePicker').value = localIsoDate;
         document.getElementById('cardDatePicker').value = localIsoDate;
+        
         init();
         setInterval(init, 30000);
     </script>
