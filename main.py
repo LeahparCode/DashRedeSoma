@@ -1,4 +1,6 @@
 import os
+import sys
+import json
 import logging
 from datetime import datetime, timedelta, timezone
 import dateutil.parser
@@ -7,7 +9,7 @@ from fastapi.responses import HTMLResponse, FileResponse
 from azure.monitor.query import LogsQueryClient
 from azure.identity import DefaultAzureCredential
 
-# Configuração de Logs para depuração
+# Configuração de Logs
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
@@ -26,7 +28,7 @@ except Exception as e:
     logger.error(f"❌ Erro ao carregar Azure: {e}")
 
 def parse_rows(result):
-    if not result or not result.tables or len(result.tables) == 0: 
+    if result is None or not result.tables or len(result.tables) == 0: 
         return []
     table = result.tables[0]
     cols = [c.name if hasattr(c, 'name') else str(c) for c in table.columns]
@@ -56,10 +58,10 @@ def fill_time_gaps_dual(raw_rows, start_date, end_date):
 
 @app.get("/api/metrics")
 async def get_metrics(date: str = None):
-    # ESTRUTURA DE FALLBACK
+    # Fallback seguro
     fallback_data = {
         "msgs_total": 0, "msgs_received": 0, "msgs_sent": 0,
-        "sql_success_rate": 100, "latency_p95": 0, "error_count": 0,
+        "sql_success_rate": 100.0, "latency_p95": 0, "error_count": 0,
         "volume_times": [], "received_data": [], "sent_data": [],
         "status_labels": [], "status_values": [],
         "funnel_data": [0, 0, 0],
@@ -67,7 +69,6 @@ async def get_metrics(date: str = None):
     }
 
     if not logs_client:
-        logger.error("Azure client não inicializado")
         return fallback_data
 
     try:
@@ -85,114 +86,124 @@ async def get_metrics(date: str = None):
         time_filter = f"| where TimeGenerated between (todatetime('{kql_start}') .. todatetime('{kql_end}'))"
         query_span = timedelta(days=90)
 
-        # QUERY 1: KPIs (Correção Latência: Remove dependência estrita de tipo de evento)
+        # --- QUERY KPI ESTRITA (AUDIT) ---
         q_kpis = f"""
         ContainerAppConsoleLogs_CL 
         {time_filter}
         | extend json_start = indexof(Log_s, '{{') 
         | extend parsed = iff(json_start >= 0, parse_json(substring(Log_s, json_start)), dynamic(null))
-        | extend is_real_msg_in = (parsed.event == "webhook_message_parsed")
-        | extend is_real_msg_out = (parsed.event == "whatsapp_status" and parsed.status == "sent")
-        | extend is_text_success = (Log_s has "[OK]" and Log_s has "SUCCESS")
-        | extend is_text_error = (Log_s has "[ERROR]") or (Log_s has "Exception")
-        | extend duration_val = coalesce(toint(parsed.duration_ms), toint(extract(@"(\\d+)ms", 1, Log_s)), toint(todouble(extract(@"(\\d+\\.\\d+)s", 1, Log_s)) * 1000))
+        | extend event_type = tostring(parsed.event)
+        
+        | extend is_in = (event_type == "audit.webhook_message_in")
+        | extend is_out = (event_type == "audit.webhook_enqueued" and parsed.io == "output")
+        | extend is_dump = (event_type == "audit.trace_dump")
+        | extend is_fail = (parsed.status == "ERROR")
+        | extend duration = toint(parsed.total_duration_ms)
+        
         | summarize 
-            msgs_received = countif(is_real_msg_in),
-            msgs_sent = countif(is_real_msg_out),
-            msgs_delivered = countif(parsed.status == "delivered"),
-            msgs_read = countif(parsed.status == "read"),
-            sql_total_ops = countif(is_real_msg_out or is_text_success or is_text_error),
-            sql_success_ops = countif(is_text_success),
-            median_lat = percentile(iff(duration_val > 100, duration_val, int(null)), 50), 
-            errors = countif(is_text_error)
+            msgs_received = countif(is_in),
+            msgs_sent = countif(is_out),
+            median_lat = percentile(iff(is_dump and duration > 0, duration, int(null)), 50),
+            errors = countif(is_fail)
         """
         
-        # QUERY 2: Top 4 Usuários
+        # --- QUERY TOP USUÁRIOS (DIA) ---
         q_top_users = f"""
         ContainerAppConsoleLogs_CL 
         {time_filter}
         | extend json_start = indexof(Log_s, '{{') | where json_start >= 0
         | extend parsed = parse_json(substring(Log_s, json_start))
-        | extend user_id = coalesce(tostring(parsed.phone_suffix), tostring(parsed.recipient_id), tostring(parsed.sender_id))
+        | extend event_type = tostring(parsed.event)
+        | where event_type == "audit.webhook_message_in" or (event_type == "audit.webhook_enqueued" and parsed.io == "output")
+        | extend user_id = coalesce(tostring(parsed.from_phone), tostring(parsed.phone_suffix))
         | where isnotempty(user_id)
-        | extend is_in = (parsed.event == "webhook_message_parsed")
-        | extend is_out = (parsed.event == "whatsapp_status" and parsed.status == "sent")
-        | where is_in or is_out
         | summarize total = count() by user_id
         | top 4 by total
         """
 
-        # QUERY 3: Status
+        # --- QUERY STATUS (LOGS GERAIS DO DIA) ---
+        # AQUI MUDOU: Removemos filtros restritivos para pegar "Tudo do Dia"
         q_status = f"""
         ContainerAppConsoleLogs_CL 
         {time_filter}
         | extend json_start = indexof(Log_s, '{{') 
         | extend parsed = iff(json_start >= 0, parse_json(substring(Log_s, json_start)), dynamic(null))
         | extend status_label = case(
-            parsed.event == "webhook_message_parsed", "Mensagem Recebida",
-            parsed.event == "whatsapp_status" and parsed.status == "sent", "Resposta Enviada",
-            Log_s has "ERROR" or Log_s has "Exception", "Erros de Log",
-            isnotempty(parsed.event), "Logs Técnicos",
-            "Outros"
+            // 1. Falhas (Vermelho)
+            parsed.status == "ERROR" or Log_s has "[ERROR]" or Log_s has "Exception", "Falhas",
+            
+            // 2. Logs de Negócio (Azul)
+            parsed.event == "audit.webhook_message_in", "Recebidas",
+            parsed.event == "audit.webhook_enqueued" and parsed.io == "output", "Enviadas",
+            
+            // 3. Todo o Resto (Azul - Logs Operacionais)
+            "Logs Operacionais"
         )
-        | where status_label != "Outros"
         | summarize count() by status = status_label
         """
 
-        # QUERY 4: Volume
+        # Volume Hora a Hora
         q_volume = f"""
         ContainerAppConsoleLogs_CL 
         {time_filter}
         | extend json_start = indexof(Log_s, '{{') | where json_start >= 0
         | extend parsed = parse_json(substring(Log_s, json_start))
-        | extend is_in = (parsed.event == "webhook_message_parsed")
-        | extend is_out = (parsed.event == "whatsapp_status" and parsed.status == "sent")
+        | extend event_type = tostring(parsed.event)
+        | extend is_in = (event_type == "audit.webhook_message_in")
+        | extend is_out = (event_type == "audit.webhook_enqueued" and parsed.io == "output")
         | where is_in or is_out
         | summarize count_in = countif(is_in), count_out = countif(is_out) by bin(TimeGenerated, 1h)
         | order by TimeGenerated asc
         """
 
-        # Execução segura
+        # Execução das Queries
         res_kpis = logs_client.query_workspace(WORKSPACE_ID, q_kpis, timespan=query_span)
         res_users = logs_client.query_workspace(WORKSPACE_ID, q_top_users, timespan=query_span)
         res_stat = logs_client.query_workspace(WORKSPACE_ID, q_status, timespan=query_span)
         res_vol = logs_client.query_workspace(WORKSPACE_ID, q_volume, timespan=query_span)
 
-        kpis = parse_rows(res_kpis)[0] if (res_kpis.tables and res_kpis.tables[0].rows) else {}
+        kpis = parse_rows(res_kpis)[0] if (res_kpis.tables and len(res_kpis.tables) > 0 and res_kpis.tables[0].rows) else {}
         top_users_rows = parse_rows(res_users)
         status_rows = parse_rows(res_stat)
         vol_rows = parse_rows(res_vol)
         
         times_clean, in_clean, out_clean = fill_time_gaps_dual(vol_rows, start_dt, end_dt)
 
-        total_ops = kpis.get('sql_total_ops', 0) or 0
-        rate = round((kpis.get('sql_success_ops', 0) / total_ops * 100), 1) if total_ops > 0 else 100.0
-        
-        # Tratamento da latência (Usando Median com fallback seguro)
+        rec = kpis.get('msgs_received', 0) or 0
+        sent = kpis.get('msgs_sent', 0) or 0
+        total_vol = rec + sent
+        err_count = kpis.get('errors', 0) or 0
+
+        if total_vol > 0:
+            success_rate = round(((total_vol - err_count) / total_vol * 100), 1)
+            if success_rate < 0: success_rate = 0.0
+        else:
+            success_rate = 100.0
+
         raw_lat = kpis.get('median_lat')
         try:
-            final_lat = int(float(raw_lat)) if raw_lat is not None else 0
+            final_lat = int(float(raw_lat)) if raw_lat is not None else 0   
         except:
             final_lat = 0
 
         return {
-            "msgs_total": (kpis.get('msgs_received') or 0) + (kpis.get('msgs_sent') or 0),
-            "msgs_received": kpis.get('msgs_received') or 0,
-            "msgs_sent": kpis.get('msgs_sent') or 0,
-            "sql_success_rate": rate,
+            "msgs_total": total_vol,
+            "msgs_received": rec,
+            "msgs_sent": sent,
+            "sql_success_rate": success_rate,
             "latency_p95": final_lat,
-            "error_count": kpis.get('errors') or 0,
+            "error_count": err_count,
             "volume_times": times_clean,
             "received_data": in_clean,
             "sent_data": out_clean,
-            "status_labels": [row['status'] for row in status_rows] if status_rows else [],
-            "status_values": [row['count_'] for row in status_rows] if status_rows else [],
-            "funnel_data": [kpis.get('msgs_sent') or 0, kpis.get('msgs_delivered') or 0, kpis.get('msgs_read') or 0],
-            "top_users_labels": [row['user_id'] for row in top_users_rows] if top_users_rows else [],
-            "top_users_totals": [row['total'] for row in top_users_rows] if top_users_rows else []
+            "status_labels": [row['status'] for row in status_rows],
+            "status_values": [row['count_'] for row in status_rows],
+            "funnel_data": [rec, sent, 0], 
+            "top_users_labels": [row['user_id'] for row in top_users_rows],
+            "top_users_totals": [row['total'] for row in top_users_rows]
         }
     except Exception as e:
-        logger.error(f"❌ Erro ao processar métricas: {e}")
+        logger.error(f"❌ Erro API: {e}")
         return fallback_data
 
 @app.get("/")
